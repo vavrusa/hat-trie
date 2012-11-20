@@ -9,6 +9,7 @@
 #include "ahtable.h"
 #include "misc.h"
 #include "pstdint.h"
+#include "slab.h"
 #include <assert.h>
 #include <string.h>
 
@@ -53,19 +54,17 @@ struct hattrie_t_
 {
     node_ptr root; // root node
     size_t m;      // number of stored keys
+    slab_cache_t slab; // trie-node allocator
 };
 
 /* Create a new trie node with all pointer pointing to the given child (which
  * can be NULL). */
 static trie_node_t* alloc_trie_node(hattrie_t* T, node_ptr child)
 {
-    trie_node_t* node = malloc_or_die(sizeof(trie_node_t));
+    trie_node_t* node = slab_cache_alloc(&T->slab);
     node->flag = NODE_TYPE_TRIE;
     node->val  = 0;
-    
-    /* pass T to allow custom allocator for trie. */
-    HT_UNUSED(T); /* unused now */
-    
+
     size_t i;
     for (i = 0; i < NODE_CHILDS; ++i) node->xs[i] = child;
     return node;
@@ -74,6 +73,8 @@ static trie_node_t* alloc_trie_node(hattrie_t* T, node_ptr child)
 /* iterate trie nodes until string is consumed or bucket is found */
 static node_ptr hattrie_consume(node_ptr *p, const char **k, size_t *l, unsigned brk)
 {
+    /* no speed gain from copying/writeback of variables */
+    
     node_ptr node = p->t->xs[(unsigned char) **k];
     while (*node.flag & NODE_TYPE_TRIE && *l > brk) {
         ++*k;
@@ -81,8 +82,6 @@ static node_ptr hattrie_consume(node_ptr *p, const char **k, size_t *l, unsigned
         *p   = node;
         node = node.t->xs[(unsigned char) **k];
     }
-
-    /* copy and writeback variables if it's faster */
 
     assert(*p->flag & NODE_TYPE_TRIE);
     return node;
@@ -130,8 +129,8 @@ static node_ptr hattrie_find(hattrie_t* T, const char **key, size_t *len)
 
     /* pure bucket holds only key suffixes, skip current char */
     if (*node.flag & NODE_TYPE_PURE_BUCKET) {
-        *key += 1; 
-        *len -= 1;
+        ++*key; 
+        --*len;
     }
     
     /* do not scan bucket, it's not needed for this operation */
@@ -142,6 +141,7 @@ hattrie_t* hattrie_create()
 {
     hattrie_t* T = malloc_or_die(sizeof(hattrie_t));
     memset(T, 0, sizeof(hattrie_t));
+    slab_cache_init(&T->slab, sizeof(trie_node_t));
 
     node_ptr node;
     node.b = ahtable_create();
@@ -154,7 +154,7 @@ hattrie_t* hattrie_create()
 }
 
 
-static void hattrie_free_node(node_ptr node)
+static void hattrie_free_node(node_ptr node, bool free_nodes)
 {
     if (*node.flag & NODE_TYPE_TRIE) {
         size_t i;
@@ -163,9 +163,11 @@ static void hattrie_free_node(node_ptr node)
 
             /* XXX: recursion might not be the best choice here. It is possible
              * to build a very deep trie. */
-            if (node.t->xs[i].t) hattrie_free_node(node.t->xs[i]);
+            if (node.t->xs[i].t) hattrie_free_node(node.t->xs[i], free_nodes);
         }
-        free(node.t);
+        if (free_nodes) {
+            slab_free(node.t);
+        }
     }
     else {
         ahtable_free(node.b);
@@ -175,7 +177,8 @@ static void hattrie_free_node(node_ptr node)
 
 void hattrie_free(hattrie_t* T)
 {
-    hattrie_free_node(T->root);
+    hattrie_free_node(T->root, false);
+    slab_cache_destroy(&T->slab);
     free(T);
 }
 
@@ -217,6 +220,7 @@ static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
     size_t len;
     const char* key;
 
+    /*! \todo expensive, maybe some heuristics or precalc would be better */
     ahtable_iter_t* i = ahtable_iter_begin(node.b, false);
     while (!ahtable_iter_finished(i)) {
         key = ahtable_iter_key(i, &len);
@@ -257,8 +261,8 @@ static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
 
 
     for (num_slots = AHTABLE_INIT_SIZE;
-            (double) left_m > ahtable_max_load_factor * (double) num_slots;
-            num_slots *= 2);
+         left_m > (size_t)(ahtable_max_load_factor * num_slots);
+         num_slots *= 2);
 
     node_ptr left, right;
     left.b  = ahtable_create_n(num_slots);
@@ -269,8 +273,8 @@ static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
 
 
     for (num_slots = AHTABLE_INIT_SIZE;
-            (double) right_m > ahtable_max_load_factor * (double) num_slots;
-            num_slots *= 2);
+         right_m > (size_t)(ahtable_max_load_factor * num_slots);
+         num_slots *= 2);
 
     right.b = ahtable_create_n(num_slots);
     right.b->c0   = j + 1;
@@ -286,6 +290,7 @@ static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
     for (; c <= node.b->c1; ++c)      parent.t->xs[c] = right;
 
 
+    /*! \todo again, very expensive */
 
     /* distribute keys to the new left or right node */
     value_t* u;

@@ -29,6 +29,16 @@ typedef unsigned long value_t;
   #define TRIE_MAXCHAR 0xff
 #endif
 
+/* turn off SLAB memory allocation */
+/* #define SLAB_OFF */
+
+/* slab debugging */
+#ifdef MEM_DEBUG
+  #define dbg_mem(msg,...) fprintf(stderr, msg)
+#else
+  #define dbg_mem(msg,...)
+#endif
+
 #endif
 
 
