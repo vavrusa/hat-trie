@@ -12,12 +12,11 @@
 #include <assert.h>
 #include <string.h>
 
+/* helper to squelch unused parameter warning */
 #define HT_UNUSED(x) x=x
 
-/* maximum number of keys that may be stored in a bucket before it is burst */
-static const size_t MAX_BUCKET_SIZE = 16384;
-#define NODE_MAXCHAR 0xff // 0x7f for 7-bit ASCII
-#define NODE_CHILDS (NODE_MAXCHAR+1)
+/* number of child nodes for used alphabet */
+#define NODE_CHILDS (TRIE_MAXCHAR+1)
 
 static const uint8_t NODE_TYPE_TRIE          = 0x1;
 static const uint8_t NODE_TYPE_PURE_BUCKET   = 0x2;
@@ -142,13 +141,13 @@ static node_ptr hattrie_find(hattrie_t* T, const char **key, size_t *len)
 hattrie_t* hattrie_create()
 {
     hattrie_t* T = malloc_or_die(sizeof(hattrie_t));
-    T->m = 0;
+    memset(T, 0, sizeof(hattrie_t));
 
     node_ptr node;
     node.b = ahtable_create();
     node.b->flag = NODE_TYPE_HYBRID_BUCKET;
     node.b->c0 = 0x00;
-    node.b->c1 = NODE_MAXCHAR;
+    node.b->c1 = TRIE_MAXCHAR;
     T->root.t = alloc_trie_node(T, node);
 
     return T;
@@ -204,7 +203,7 @@ static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
         }
 
         node.b->c0   = 0x00;
-        node.b->c1   = NODE_MAXCHAR;
+        node.b->c1   = TRIE_MAXCHAR;
         node.b->flag = NODE_TYPE_HYBRID_BUCKET;
 
         return;
@@ -246,7 +245,7 @@ static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
     }
 
     /* now split into two node cooresponding to ranges [0, j] and
-     * [j + 1, NODE_MAXCHAR], respectively. */
+     * [j + 1, TRIE_MAXCHAR], respectively. */
 
 
     /* create new left and right nodes */
@@ -257,7 +256,7 @@ static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
     size_t num_slots;
 
 
-    for (num_slots = ahtable_initial_size;
+    for (num_slots = AHTABLE_INIT_SIZE;
             (double) left_m > ahtable_max_load_factor * (double) num_slots;
             num_slots *= 2);
 
@@ -269,7 +268,7 @@ static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
                       NODE_TYPE_PURE_BUCKET : NODE_TYPE_HYBRID_BUCKET;
 
 
-    for (num_slots = ahtable_initial_size;
+    for (num_slots = AHTABLE_INIT_SIZE;
             (double) right_m > ahtable_max_load_factor * (double) num_slots;
             num_slots *= 2);
 
@@ -349,7 +348,7 @@ value_t* hattrie_get(hattrie_t* T, const char* key, size_t len)
 
 
     /* preemptively split the bucket if it is full */
-    while (ahtable_size(node.b) >= MAX_BUCKET_SIZE) {
+    while (ahtable_size(node.b) >= TRIE_BUCKET_SIZE) {
         hattrie_split(T, parent, node);
 
         /* after the split, the node pointer is invalidated, so we search from
@@ -506,10 +505,10 @@ static void hattrie_iter_nextnode(hattrie_iter_t* i)
 
         /* push all child nodes from right to left */
         int j;
-        for (j = NODE_MAXCHAR; j >= 0; --j) {
+        for (j = TRIE_MAXCHAR; j >= 0; --j) {
             
             /* skip repeated pointers to hybrid bucket */
-            if (j < NODE_MAXCHAR && node.t->xs[j].t == node.t->xs[j + 1].t) continue;
+            if (j < TRIE_MAXCHAR && node.t->xs[j].t == node.t->xs[j + 1].t) continue;
 
             // push stack
             next = i->stack;

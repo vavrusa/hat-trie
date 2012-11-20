@@ -42,11 +42,11 @@ typedef struct ahtable_t_
     size_t max_m;    // number of stored keys before we resize
 
     size_t*  slot_sizes;
+    size_t*  slot_res;
     slot_t*  slots;
 } ahtable_t;
 
 extern const double ahtable_max_load_factor;
-extern const size_t ahtable_initial_size;
 
 ahtable_t* ahtable_create   (void);         // Create an empty hash table.
 ahtable_t* ahtable_create_n (size_t n);     // Create an empty hash table, with

@@ -14,7 +14,6 @@
 
 
 const double ahtable_max_load_factor = 100000.0; /* arbitrary large number => don't resize */
-const const size_t ahtable_initial_size = 4096;
 static const uint16_t LONG_KEYLEN_MASK = 0x7fff;
 
 static size_t keylen(slot_t s) {
@@ -29,7 +28,7 @@ static size_t keylen(slot_t s) {
 
 ahtable_t* ahtable_create()
 {
-    return ahtable_create_n(ahtable_initial_size);
+    return ahtable_create_n(AHTABLE_INIT_SIZE);
 }
 
 
@@ -73,7 +72,7 @@ void ahtable_clear(ahtable_t* T)
 {
     size_t i;
     for (i = 0; i < T->n; ++i) free(T->slots[i]);
-    T->n = ahtable_initial_size;
+    T->n = AHTABLE_INIT_SIZE;
     T->slots = realloc_or_die(T->slots, T->n * sizeof(slot_t));
     memset(T->slots, 0, T->n * sizeof(slot_t));
 
