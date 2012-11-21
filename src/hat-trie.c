@@ -182,6 +182,150 @@ void hattrie_free(hattrie_t* T)
     free(T);
 }
 
+int hattrie_split_mid(node_ptr node, unsigned *left_m, unsigned *right_m)
+{
+    /* count the number of occourances of every leading character */
+    unsigned int cs[NODE_CHILDS]; // occurance count for leading chars
+    memset(cs, 0, NODE_CHILDS * sizeof(unsigned int));
+    size_t len;
+    const char* key;
+
+    /*! \todo expensive, maybe some heuristics or precalc would be better */
+    ahtable_iter_t* i = ahtable_iter_begin(node.b, false);
+    while (!ahtable_iter_finished(i)) {
+        key = ahtable_iter_key(i, &len);
+        assert(len > 0);
+        cs[(unsigned char) key[0]] += 1;
+        ahtable_iter_next(i);
+    }
+    ahtable_iter_free(i);
+
+    /* choose a split point */
+    unsigned int all_m;
+    unsigned char j = node.b->c0;
+    all_m   = ahtable_size(node.b);
+    *left_m  = cs[j];
+    *right_m = all_m - *left_m;
+    int d;
+
+    while (j + 1 < node.b->c1) {
+        d = abs((int) (*left_m + cs[j + 1]) - (int) (*right_m - cs[j + 1]));
+        if (d <= abs(*left_m - *right_m) && *left_m + cs[j + 1] < all_m) {
+            j += 1;
+            *left_m  += cs[j];
+            *right_m -= cs[j];
+        }
+        else break;
+    }
+    
+    return j;
+}
+
+static void hattrie_split_fill(node_ptr src, node_ptr left, node_ptr right, uint8_t split)
+{
+    /*! \todo again, very expensive */
+    /* right should be most of the time hybrid */
+
+    /* keep or distribute keys to the new right node */
+    value_t* u;
+    const char* key;
+    size_t len;
+    ahtable_iter_t* i = ahtable_iter_begin(src.b, false);
+    while (!ahtable_iter_finished(i)) {
+        key = ahtable_iter_key(i, &len);
+        u   = ahtable_iter_val(i);
+        assert(len > 0);
+
+        /* first char > split_point, move to the right */
+        if ((unsigned char) key[0] > split) {
+            if (src.b != right.b) {
+                /* insert to right (new bucket) */
+                if (*right.flag & NODE_TYPE_PURE_BUCKET) {
+                    ahtable_insert(right.b, key + 1, len - 1, *u);
+                }
+                else {
+                    ahtable_insert(right.b, key, len, *u);
+                }
+                /* transferred to right (from reused) */
+                if (src.b == left.b) {
+                    ahtable_iter_del(i);
+                    continue;
+                }
+            }   /* keep the node in right */
+        } else {
+            if (src.b != left.b) {
+                /* insert to left (new bucket) */
+                if (*left.flag & NODE_TYPE_PURE_BUCKET) {
+                    ahtable_insert(left.b, key + 1, len - 1, *u);
+                }
+                else {
+                    ahtable_insert(left.b, key, len, *u);
+                }
+                /* transferred to left (from reused) */
+                if (src.b == right.b) {
+                    ahtable_iter_del(i);
+                    continue;
+                }
+            }   /* keep the node in left */
+        }
+        
+        ahtable_iter_next(i);
+    }
+    
+    ahtable_iter_free(i);
+}
+
+/* Split hybrid node - this is similar operation to burst. */
+static void hattrie_split_h(hattrie_t* T, node_ptr parent, node_ptr node)
+{
+    /* Find split point. */
+    unsigned left_m, right_m;
+    unsigned char j = hattrie_split_mid(node, &left_m, &right_m);
+
+    /* now split into two node cooresponding to ranges [0, j] and
+     * [j + 1, TRIE_MAXCHAR], respectively. */
+
+    /* create new left and right nodes
+     * one node may reuse existing if it keeps hybrid flag
+     * hybrid -> pure always needs a new table
+     */
+    unsigned char c0 = node.b->c0, c1 = node.b->c1;
+    node_ptr left, right;
+    if (j + 1 == c1) { /* right will be pure */
+        right.b = ahtable_create();
+        if (j == c0) { /* left will be pure as well */
+            left.b = ahtable_create();
+        } else {       /* left will be hybrid */
+            left.b = node.b;
+        }
+    } else {           /* right will be hybrid */
+        right.b = node.b;
+        left.b = ahtable_create();
+    }
+    
+    /* setup created nodes */
+    left.b->c0    = c0;
+    left.b->c1    = j;
+    left.b->flag = c0 == j ? NODE_TYPE_PURE_BUCKET : NODE_TYPE_HYBRID_BUCKET; // need to force it
+    right.b->c0   = j + 1;
+    right.b->c1   = c1;
+    right.b->flag = right.b->c0 == right.b->c1 ?
+                      NODE_TYPE_PURE_BUCKET : NODE_TYPE_HYBRID_BUCKET;
+
+
+    /* update the parent's pointer */
+    unsigned int c;
+    for (c = c0; c <= j; ++c) parent.t->xs[c] = left;
+    for (; c <= c1; ++c)      parent.t->xs[c] = right;
+
+
+    /* fill new tables */
+    hattrie_split_fill(node, left, right, j);
+    if (node.b != left.b && node.b != right.b) {
+        ahtable_free(node.b);
+    }
+}
+
 /* Perform one split operation on the given node with the given parent.
  */
 static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
@@ -213,121 +357,7 @@ static void hattrie_split(hattrie_t* T, node_ptr parent, node_ptr node)
     }
 
     /* This is a hybrid bucket. Perform a proper split. */
-
-    /* count the number of occourances of every leading character */
-    unsigned int cs[NODE_CHILDS]; // occurance count for leading chars
-    memset(cs, 0, NODE_CHILDS * sizeof(unsigned int));
-    size_t len;
-    const char* key;
-
-    /*! \todo expensive, maybe some heuristics or precalc would be better */
-    ahtable_iter_t* i = ahtable_iter_begin(node.b, false);
-    while (!ahtable_iter_finished(i)) {
-        key = ahtable_iter_key(i, &len);
-        assert(len > 0);
-        cs[(unsigned char) key[0]] += 1;
-        ahtable_iter_next(i);
-    }
-    ahtable_iter_free(i);
-
-    /* choose a split point */
-    unsigned int left_m, right_m, all_m;
-    unsigned char j = node.b->c0;
-    all_m   = ahtable_size(node.b);
-    left_m  = cs[j];
-    right_m = all_m - left_m;
-    int d;
-
-    while (j + 1 < node.b->c1) {
-        d = abs((int) (left_m + cs[j + 1]) - (int) (right_m - cs[j + 1]));
-        if (d <= abs(left_m - right_m) && left_m + cs[j + 1] < all_m) {
-            j += 1;
-            left_m  += cs[j];
-            right_m -= cs[j];
-        }
-        else break;
-    }
-
-    /* now split into two node cooresponding to ranges [0, j] and
-     * [j + 1, TRIE_MAXCHAR], respectively. */
-
-
-    /* create new left and right nodes */
-
-    /* TODO: Add a special case if either node is a hybrid bucket containing all
-     * the keys. In such a case, do not build a new table, just use the old one.
-     * */
-    size_t num_slots;
-
-
-    for (num_slots = AHTABLE_INIT_SIZE;
-         left_m > (size_t)(ahtable_max_load_factor * num_slots);
-         num_slots *= 2);
-
-    node_ptr left, right;
-    left.b  = ahtable_create_n(num_slots);
-    left.b->c0   = node.b->c0;
-    left.b->c1   = j;
-    left.b->flag = left.b->c0 == left.b->c1 ?
-                      NODE_TYPE_PURE_BUCKET : NODE_TYPE_HYBRID_BUCKET;
-
-
-    for (num_slots = AHTABLE_INIT_SIZE;
-         right_m > (size_t)(ahtable_max_load_factor * num_slots);
-         num_slots *= 2);
-
-    right.b = ahtable_create_n(num_slots);
-    right.b->c0   = j + 1;
-    right.b->c1   = node.b->c1;
-    right.b->flag = right.b->c0 == right.b->c1 ?
-                      NODE_TYPE_PURE_BUCKET : NODE_TYPE_HYBRID_BUCKET;
-
-
-    /* update the parent's pointer */
-
-    unsigned int c;
-    for (c = node.b->c0; c <= j; ++c) parent.t->xs[c] = left;
-    for (; c <= node.b->c1; ++c)      parent.t->xs[c] = right;
-
-
-    /*! \todo again, very expensive */
-
-    /* distribute keys to the new left or right node */
-    value_t* u;
-    value_t* v;
-    i = ahtable_iter_begin(node.b, false);
-    while (!ahtable_iter_finished(i)) {
-        key = ahtable_iter_key(i, &len);
-        u   = ahtable_iter_val(i);
-        assert(len > 0);
-
-        /* left */
-        if ((unsigned char) key[0] <= j) {
-            if (*left.flag & NODE_TYPE_PURE_BUCKET) {
-                v = ahtable_get(left.b, key + 1, len - 1);
-            }
-            else {
-                v = ahtable_get(left.b, key, len);
-            }
-            *v = *u;
-        }
-
-        /* right */
-        else {
-            if (*right.flag & NODE_TYPE_PURE_BUCKET) {
-                v = ahtable_get(right.b, key + 1, len - 1);
-            }
-            else {
-                v = ahtable_get(right.b, key, len);
-            }
-            *v = *u;
-        }
-
-        ahtable_iter_next(i);
-    }
-
-    ahtable_iter_free(i);
-    ahtable_free(node.b);
+    hattrie_split_h(T, parent, node);
 }
 
 value_t* hattrie_get(hattrie_t* T, const char* key, size_t len)
