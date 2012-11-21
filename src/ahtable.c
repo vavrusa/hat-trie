@@ -13,8 +13,20 @@
 
 
 
-const double ahtable_max_load_factor = 10000.0; /* arbitrary large number => don't resize */
+const size_t ahtable_max_load_factor = 10000.0; /* arbitrary large number => don't resize */
 static const uint16_t LONG_KEYLEN_MASK = 0x7fff;
+
+/* Allocate by larger chunks to avoid frequent reallocs. */
+/* http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2 */
+static inline unsigned next_size(unsigned v) {
+    --v;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    return (++v) << 1; /* x2 */
+}
 
 static size_t keylen(slot_t s) {
     if (0x1 & *s) {
@@ -44,8 +56,9 @@ ahtable_t* ahtable_create_n(size_t n)
     T->slots = malloc_or_die(n * sizeof(slot_t));
     memset(T->slots, 0, n * sizeof(slot_t));
 
-    T->slot_sizes = malloc_or_die(n * sizeof(size_t));
-    memset(T->slot_sizes, 0, n * sizeof(size_t));
+    const size_t sslen = 2 * T->n * sizeof(uint32_t); /* used | reserved */
+    T->slot_sizes = malloc_or_die(sslen);
+    memset(T->slot_sizes, 0, sslen);
 
     return T;
 }
@@ -76,8 +89,9 @@ void ahtable_clear(ahtable_t* T)
     T->slots = realloc_or_die(T->slots, T->n * sizeof(slot_t));
     memset(T->slots, 0, T->n * sizeof(slot_t));
 
-    T->slot_sizes = realloc_or_die(T->slot_sizes, T->n * sizeof(size_t));
-    memset(T->slot_sizes, 0, T->n * sizeof(size_t));
+    const size_t sslen = 2 * T->n * sizeof(uint32_t); /* used | reserved */
+    T->slot_sizes = realloc_or_die(T->slot_sizes, sslen);
+    memset(T->slot_sizes, 0, sslen);
 }
 
 
@@ -116,8 +130,9 @@ static void ahtable_expand(ahtable_t* T)
      */
     assert(T->n > 0);
     size_t new_n = 2 * T->n;
-    size_t* slot_sizes = malloc_or_die(new_n * sizeof(size_t));
-    memset(slot_sizes, 0, new_n * sizeof(size_t));
+    size_t slot_scount = 2 * new_n; /* used | reserved */
+    uint32_t* slot_sizes = malloc_or_die(slot_scount * sizeof(uint32_t));
+    memset(slot_sizes, 0, slot_scount * sizeof(uint32_t));
 
     const char* key;
     size_t len = 0;
@@ -185,19 +200,38 @@ static void ahtable_expand(ahtable_t* T)
     T->max_m = (size_t) (ahtable_max_load_factor * (double) T->n);
 }
 
+static value_t* insert_key(ahtable_t* T, uint32_t h, const char* key, size_t len)
+{
+    uint32_t new_size = T->slot_sizes[h];
+    new_size += (len >= 128 ? 2 : 1);        // key length
+    new_size += len * sizeof(unsigned char); // key
+    new_size += sizeof(value_t);             // value
+
+    /* fetch reserved size */
+    uint32_t* reserved = &T->slot_sizes[T->n + h];
+    if (*reserved < new_size) {
+        *reserved = next_size(new_size);
+        T->slots[h] = realloc_or_die(T->slots[h], *reserved);
+    }
+    ++T->m;
+
+    value_t *val = NULL;
+    ins_key(T->slots[h] + T->slot_sizes[h], key, len, &val);
+    T->slot_sizes[h] = new_size;
+    return val;
+}
+
 
 static value_t* get_key(ahtable_t* T, const char* key, size_t len, bool insert_missing)
 {
     /* if we are at capacity, preemptively resize */
-    if (insert_missing && T->m >= T->max_m) {
+    if (T->m >= T->max_m) {
         ahtable_expand(T);
     }
-
-
+    
     uint32_t i = hash(key, len) % T->n;
     size_t k;
     slot_t s;
-    value_t* val;
 
     /* search the array for our key */
     s = T->slots[i];
@@ -224,20 +258,9 @@ static value_t* get_key(ahtable_t* T, const char* key, size_t len, bool insert_m
     }
 
 
+    /* the key was not found, so we must insert it. */
     if (insert_missing) {
-        /* the key was not found, so we must insert it. */
-        size_t new_size = T->slot_sizes[i];
-        new_size += 1 + (len >= 128 ? 1 : 0);    // key length
-        new_size += len * sizeof(unsigned char); // key
-        new_size += sizeof(value_t);             // value
-
-        T->slots[i] = realloc_or_die(T->slots[i], new_size);
-
-        ++T->m;
-        ins_key(T->slots[i] + T->slot_sizes[i], key, len, &val);
-        T->slot_sizes[i] = new_size;
-
-        return val;
+        return insert_key(T, i, key, len);
     }
     else return NULL;
 }
@@ -252,6 +275,18 @@ value_t* ahtable_get(ahtable_t* T, const char* key, size_t len)
 value_t* ahtable_tryget(ahtable_t* T, const char* key, size_t len )
 {
     return get_key(T, key, len, false);
+}
+
+
+void ahtable_insert (ahtable_t* T, const char* key, size_t len, value_t val)
+{
+    /* if we are at capacity, preemptively resize */
+    if (T->m >= T->max_m) {
+        ahtable_expand(T);
+    }
+    
+    uint32_t i = hash(key, len) % T->n;
+    *insert_key(T, i, key, len) = val;
 }
 
 
@@ -360,6 +395,12 @@ static void ahtable_sorted_iter_next(ahtable_sorted_iter_t* i)
     ++i->i;
 }
 
+static void ahtable_sorted_iter_del(ahtable_sorted_iter_t* i)
+{
+    if (ahtable_sorted_iter_finished(i)) return;
+    assert(0);
+}
+
 
 static void ahtable_sorted_iter_free(ahtable_sorted_iter_t* i)
 {
@@ -396,13 +437,13 @@ static value_t*  ahtable_sorted_iter_val(ahtable_sorted_iter_t* i)
 
 typedef struct ahtable_unsorted_iter_t_
 {
-    const ahtable_t* T; // parent
+    ahtable_t* T; // parent
     size_t i;           // slot index
     slot_t s;           // slot position
 } ahtable_unsorted_iter_t;
 
 
-static ahtable_unsorted_iter_t* ahtable_unsorted_iter_begin(const ahtable_t* T)
+static ahtable_unsorted_iter_t* ahtable_unsorted_iter_begin(ahtable_t* T)
 {
     ahtable_unsorted_iter_t* i = malloc_or_die(sizeof(ahtable_unsorted_iter_t));
     i->T = T;
@@ -445,6 +486,26 @@ static void ahtable_unsorted_iter_next(ahtable_unsorted_iter_t* i)
     }
 }
 
+static void ahtable_unsorted_iter_del(ahtable_unsorted_iter_t* i)
+{
+    /* get the entry length */
+    size_t k = keylen(i->s);
+    unsigned char* t = i->s + (k < 128 ? 1 : 2) + k + sizeof(value_t);
+    memmove(i->s, t, i->T->slot_sizes[i->i] - (size_t)(t - i->T->slots[i->i]));
+    i->T->slot_sizes[i->i] -= (size_t)(t - i->s);
+    --i->T->m;
+    
+    /* find next filled slot*/
+    if ((size_t) (i->s - i->T->slots[i->i]) >= i->T->slot_sizes[i->i]) {
+        do {
+            ++i->i;
+        } while(i->i < i->T->n &&
+                i->T->slot_sizes[i->i] == 0);
+
+        if (i->i < i->T->n) i->s = i->T->slots[i->i];
+        else i->s = NULL;
+    }
+}
 
 static void ahtable_unsorted_iter_free(ahtable_unsorted_iter_t* i)
 {
@@ -503,7 +564,7 @@ struct ahtable_iter_t_
 };
 
 
-ahtable_iter_t* ahtable_iter_begin(const ahtable_t* T, bool sorted) {
+ahtable_iter_t* ahtable_iter_begin(ahtable_t* T, bool sorted) {
     ahtable_iter_t* i = malloc_or_die(sizeof(ahtable_iter_t));
     i->sorted = sorted;
     if (sorted) i->i.sorted   = ahtable_sorted_iter_begin(T);
@@ -516,6 +577,12 @@ void ahtable_iter_next(ahtable_iter_t* i)
 {
     if (i->sorted) ahtable_sorted_iter_next(i->i.sorted);
     else           ahtable_unsorted_iter_next(i->i.unsorted);
+}
+
+void ahtable_iter_del(ahtable_iter_t* i)
+{
+    if (i->sorted) ahtable_sorted_iter_del(i->i.sorted);
+    else           ahtable_unsorted_iter_del(i->i.unsorted);
 }
 
 

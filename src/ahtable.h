@@ -41,12 +41,9 @@ typedef struct ahtable_t_
     size_t m;        // numbur of key/value pairs stored
     size_t max_m;    // number of stored keys before we resize
 
-    size_t*  slot_sizes;
-    size_t*  slot_res;
+    uint32_t*  slot_sizes;
     slot_t*  slots;
 } ahtable_t;
-
-extern const double ahtable_max_load_factor;
 
 ahtable_t* ahtable_create   (void);         // Create an empty hash table.
 ahtable_t* ahtable_create_n (size_t n);     // Create an empty hash table, with
@@ -66,10 +63,13 @@ size_t     ahtable_size   (const ahtable_t*); // Number of stored keys.
  */
 value_t* ahtable_get (ahtable_t*, const char* key, size_t len);
 
-
 /** Find a given key in the table, returning a NULL pointer if it does not
  * exist. */
 value_t* ahtable_tryget (ahtable_t*, const char* key, size_t len);
+
+/** Insert given key and value without checking for existence.
+ */
+void ahtable_insert (ahtable_t* T, const char* key, size_t len, value_t val);
 
 
 int ahtable_del(ahtable_t*, const char* key, size_t len);
@@ -77,8 +77,9 @@ int ahtable_del(ahtable_t*, const char* key, size_t len);
 
 typedef struct ahtable_iter_t_ ahtable_iter_t;
 
-ahtable_iter_t* ahtable_iter_begin     (const ahtable_t*, bool sorted);
+ahtable_iter_t* ahtable_iter_begin     (ahtable_t*, bool sorted);
 void            ahtable_iter_next      (ahtable_iter_t*);
+void            ahtable_iter_del       (ahtable_iter_t*);
 bool            ahtable_iter_finished  (ahtable_iter_t*);
 void            ahtable_iter_free      (ahtable_iter_t*);
 const char*     ahtable_iter_key       (ahtable_iter_t*, size_t* len);
