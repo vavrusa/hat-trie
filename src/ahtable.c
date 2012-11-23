@@ -137,17 +137,21 @@ static void ahtable_expand(ahtable_t* T)
     const char* key;
     size_t len = 0;
     size_t m = 0;
-    ahtable_iter_t* i = ahtable_iter_begin(T, false);
-    while (!ahtable_iter_finished(i)) {
-        key = ahtable_iter_key(i, &len);
-        slot_sizes[hash(key, len) % new_n] +=
+    size_t h;
+    ahtable_iter_t i;
+    ahtable_iter_begin(T, &i, false);
+    while (!ahtable_iter_finished(&i)) {
+        key = ahtable_iter_key(&i, &len);
+        h = hash(key, len) % new_n;
+        slot_sizes[h] +=
             len + sizeof(value_t) + (len >= 128 ? 2 : 1);
+        slot_sizes[new_n + h] = slot_sizes[h];
 
         ++m;
-        ahtable_iter_next(i);
+        ahtable_iter_next(&i);
     }
     assert(m == T->m);
-    ahtable_iter_free(i);
+    ahtable_iter_free(&i);
 
 
     /* allocate slots */
@@ -166,25 +170,24 @@ static void ahtable_expand(ahtable_t* T)
      * */
     slot_t* slots_next = malloc_or_die(new_n * sizeof(slot_t));
     memcpy(slots_next, slots, new_n * sizeof(slot_t));
-    size_t h;
     m = 0;
     value_t* u;
     value_t* v;
-    i = ahtable_iter_begin(T, false);
-    while (!ahtable_iter_finished(i)) {
+    ahtable_iter_begin(T, &i, false);
+    while (!ahtable_iter_finished(&i)) {
 
-        key = ahtable_iter_key(i, &len);
+        key = ahtable_iter_key(&i, &len);
         h = hash(key, len) % new_n;
 
         slots_next[h] = ins_key(slots_next[h], key, len, &u);
-        v = ahtable_iter_val(i);
+        v = ahtable_iter_val(&i);
         *u = *v;
 
         ++m;
-        ahtable_iter_next(i);
+        ahtable_iter_next(&i);
     }
     assert(m == T->m);
-    ahtable_iter_free(i);
+    ahtable_iter_free(&i);
 
 
     free(slots_next);
@@ -350,82 +353,69 @@ static int cmpkey(const void* a_, const void* b_)
 /* Sorted/unsorted iterators are kept private and exposed by passing the
 sorted flag to ahtable_iter_begin. */
 
-typedef struct ahtable_sorted_iter_t_
+static void ahtable_sorted_iter_begin(ahtable_t* T, ahtable_iter_t *i)
 {
-    const ahtable_t* T; // parent
-    slot_t* xs; // pointers to keys
-    size_t i; // current key
-} ahtable_sorted_iter_t;
-
-
-static ahtable_sorted_iter_t* ahtable_sorted_iter_begin(const ahtable_t* T)
-{
-    ahtable_sorted_iter_t* i = malloc_or_die(sizeof(ahtable_sorted_iter_t));
-    i->T = T;
-    i->xs = malloc_or_die(T->m * sizeof(slot_t));
-    i->i = 0;
+    i->d.xs = malloc_or_die(T->m * sizeof(slot_t));
 
     slot_t s;
     size_t j, k, u;
     for (j = 0, u = 0; j < T->n; ++j) {
         s = T->slots[j];
         while (s < T->slots[j] + T->slot_sizes[j]) {
-            i->xs[u++] = s;
+            i->d.xs[u++] = s;
             k = keylen(s);
             s += k < 128 ? 1 : 2;
             s += k + sizeof(value_t);
         }
     }
 
-    qsort(i->xs, T->m, sizeof(slot_t), cmpkey);
-
-    return i;
+    qsort(i->d.xs, T->m, sizeof(slot_t), cmpkey);
 }
 
 
-static bool ahtable_sorted_iter_finished(ahtable_sorted_iter_t* i)
+static inline bool ahtable_sorted_iter_finished(ahtable_iter_t* i)
 {
     return i->i >= i->T->m;
 }
 
 
-static void ahtable_sorted_iter_next(ahtable_sorted_iter_t* i)
+static inline void ahtable_sorted_iter_next(ahtable_iter_t* i)
 {
-    if (ahtable_sorted_iter_finished(i)) return;
+    if (ahtable_iter_finished(i)) return;
     ++i->i;
 }
 
-static void ahtable_sorted_iter_del(ahtable_sorted_iter_t* i)
+static void ahtable_sorted_iter_del(ahtable_iter_t* i)
 {
-    if (ahtable_sorted_iter_finished(i)) return;
+    if (ahtable_iter_finished(i)) return;
+    /*! \todo same as unsorted, but remove from iterator sorted array */
     assert(0);
 }
 
 
-static void ahtable_sorted_iter_free(ahtable_sorted_iter_t* i)
+static inline void ahtable_sorted_iter_free(ahtable_iter_t* i)
 {
     if (i == NULL) return;
-    free(i->xs);
-    free(i);
+    free(i->d.xs);
 }
 
 
-static const char* ahtable_sorted_iter_key(ahtable_sorted_iter_t* i, size_t* len)
+static const char* ahtable_sorted_iter_key(ahtable_iter_t* i, size_t* len)
 {
-    if (ahtable_sorted_iter_finished(i)) return NULL;
+    if (ahtable_iter_finished(i)) return NULL;
 
-    slot_t s = i->xs[i->i];
+    slot_t s = i->d.xs[i->i];
     *len = keylen(s);
 
     return (const char*) (s + (*len < 128 ? 1 : 2));
 }
 
 
-static value_t*  ahtable_sorted_iter_val(ahtable_sorted_iter_t* i)
+static value_t*  ahtable_sorted_iter_val(ahtable_iter_t* i)
 {
-    if (ahtable_sorted_iter_finished(i)) return NULL;
+    if (ahtable_iter_finished(i)) return NULL;
 
-    slot_t s = i->xs[i->i];
+    slot_t s = i->d.xs[i->i];
     size_t k = keylen(s);
 
     s += k < 128 ? 1 : 2;
@@ -434,90 +424,70 @@ static value_t*  ahtable_sorted_iter_val(ahtable_sorted_iter_t* i)
     return (value_t*) s;
 }
 
-
-typedef struct ahtable_unsorted_iter_t_
+static void ahtable_unsorted_iter_begin(ahtable_t* T, ahtable_iter_t *i)
 {
-    ahtable_t* T; // parent
-    size_t i;           // slot index
-    slot_t s;           // slot position
-} ahtable_unsorted_iter_t;
-
-
-static ahtable_unsorted_iter_t* ahtable_unsorted_iter_begin(ahtable_t* T)
-{
-    ahtable_unsorted_iter_t* i = malloc_or_die(sizeof(ahtable_unsorted_iter_t));
-    i->T = T;
-
     for (i->i = 0; i->i < i->T->n; ++i->i) {
-        i->s = T->slots[i->i];
-        if ((size_t) (i->s - T->slots[i->i]) >= T->slot_sizes[i->i]) continue;
+        i->d.s = T->slots[i->i];
+        if ((size_t) (i->d.s - T->slots[i->i]) >= T->slot_sizes[i->i]) continue;
         break;
     }
-
-    return i;
 }
 
 
-static bool ahtable_unsorted_iter_finished(ahtable_unsorted_iter_t* i)
+static inline bool ahtable_unsorted_iter_finished(ahtable_iter_t* i)
 {
     return i->i >= i->T->n;
 }
 
 
-static void ahtable_unsorted_iter_next(ahtable_unsorted_iter_t* i)
+static void ahtable_unsorted_iter_next(ahtable_iter_t* i)
 {
-    if (ahtable_unsorted_iter_finished(i)) return;
+    if (ahtable_iter_finished(i)) return;
 
     /* get the key length */
-    size_t k = keylen(i->s);
-    i->s += k < 128 ? 1 : 2;
+    size_t k = keylen(i->d.s);
+    i->d.s += k < 128 ? 1 : 2;
 
     /* skip to the next key */
-    i->s += k + sizeof(value_t);
+    i->d.s += k + sizeof(value_t);
 
-    if ((size_t) (i->s - i->T->slots[i->i]) >= i->T->slot_sizes[i->i]) {
+    if ((size_t) (i->d.s - i->T->slots[i->i]) >= i->T->slot_sizes[i->i]) {
         do {
             ++i->i;
         } while(i->i < i->T->n &&
                 i->T->slot_sizes[i->i] == 0);
 
-        if (i->i < i->T->n) i->s = i->T->slots[i->i];
-        else i->s = NULL;
+        if (i->i < i->T->n) i->d.s = i->T->slots[i->i];
+        else i->d.s = NULL;
     }
 }
 
-static void ahtable_unsorted_iter_del(ahtable_unsorted_iter_t* i)
+static void ahtable_unsorted_iter_del(ahtable_iter_t* i)
 {
     /* get the entry length */
-    size_t k = keylen(i->s);
-    unsigned char* t = i->s + (k < 128 ? 1 : 2) + k + sizeof(value_t);
-    memmove(i->s, t, i->T->slot_sizes[i->i] - (size_t)(t - i->T->slots[i->i]));
-    i->T->slot_sizes[i->i] -= (size_t)(t - i->s);
+    size_t k = keylen(i->d.s);
+    unsigned char* t = i->d.s + (k < 128 ? 1 : 2) + k + sizeof(value_t);
+    memmove(i->d.s, t, i->T->slot_sizes[i->i] - (size_t)(t - i->T->slots[i->i]));
+    i->T->slot_sizes[i->i] -= (size_t)(t - i->d.s);
     --i->T->m;
     
     /* find next filled slot*/
-    if ((size_t) (i->s - i->T->slots[i->i]) >= i->T->slot_sizes[i->i]) {
+    if ((size_t) (i->d.s - i->T->slots[i->i]) >= i->T->slot_sizes[i->i]) {
         do {
             ++i->i;
         } while(i->i < i->T->n &&
                 i->T->slot_sizes[i->i] == 0);
 
-        if (i->i < i->T->n) i->s = i->T->slots[i->i];
-        else i->s = NULL;
+        if (i->i < i->T->n) i->d.s = i->T->slots[i->i];
+        else i->d.s = NULL;
     }
 }
 
-static void ahtable_unsorted_iter_free(ahtable_unsorted_iter_t* i)
+static const char* ahtable_unsorted_iter_key(ahtable_iter_t* i, size_t* len)
 {
-    free(i);
-}
+    if (ahtable_iter_finished(i)) return NULL;
 
-
-static const char* ahtable_unsorted_iter_key(ahtable_unsorted_iter_t* i, size_t* len)
-{
-    if (ahtable_unsorted_iter_finished(i)) return NULL;
-
-    slot_t s = i->s;
+    slot_t s = i->d.s;
     size_t k;
     if (0x1 & *s) {
         k = (size_t) (*((uint16_t*) s)) >> 1;
@@ -533,11 +503,11 @@ static const char* ahtable_unsorted_iter_key(ahtable_unsorted_iter_t* i, size_t*
 }
 
 
-static value_t* ahtable_unsorted_iter_val(ahtable_unsorted_iter_t* i)
+static value_t* ahtable_unsorted_iter_val(ahtable_iter_t* i)
 {
-    if (ahtable_unsorted_iter_finished(i)) return NULL;
+    if (ahtable_iter_finished(i)) return NULL;
 
-    slot_t s = i->s;
+    slot_t s = i->d.s;
 
     size_t k;
     if (0x1 & *s) {
@@ -554,64 +524,51 @@ static value_t* ahtable_unsorted_iter_val(ahtable_unsorted_iter_t* i)
 }
 
 
-struct ahtable_iter_t_
-{
-    bool sorted;
-    union {
-        ahtable_unsorted_iter_t* unsorted;
-        ahtable_sorted_iter_t* sorted;
-    } i;
-};
-
-
-ahtable_iter_t* ahtable_iter_begin(ahtable_t* T, bool sorted) {
-    ahtable_iter_t* i = malloc_or_die(sizeof(ahtable_iter_t));
+void ahtable_iter_begin(ahtable_t* T, ahtable_iter_t* i, bool sorted) {
+    memset(i, 0, sizeof(ahtable_iter_t));
     i->sorted = sorted;
-    if (sorted) i->i.sorted   = ahtable_sorted_iter_begin(T);
-    else        i->i.unsorted = ahtable_unsorted_iter_begin(T);
-    return i;
+    i->T = T;
+    if (sorted) ahtable_sorted_iter_begin(T, i);
+    else        ahtable_unsorted_iter_begin(T, i);
 }
 
 
 void ahtable_iter_next(ahtable_iter_t* i)
 {
-    if (i->sorted) ahtable_sorted_iter_next(i->i.sorted);
-    else           ahtable_unsorted_iter_next(i->i.unsorted);
+    if (i->sorted) ahtable_sorted_iter_next(i);
+    else           ahtable_unsorted_iter_next(i);
 }
 
 void ahtable_iter_del(ahtable_iter_t* i)
 {
-    if (i->sorted) ahtable_sorted_iter_del(i->i.sorted);
-    else           ahtable_unsorted_iter_del(i->i.unsorted);
+    if (i->sorted) ahtable_sorted_iter_del(i);
+    else           ahtable_unsorted_iter_del(i);
 }
 
 
 bool ahtable_iter_finished(ahtable_iter_t* i)
 {
-    if (i->sorted) return ahtable_sorted_iter_finished(i->i.sorted);
-    else           return ahtable_unsorted_iter_finished(i->i.unsorted);
+    if (i->sorted) return ahtable_sorted_iter_finished(i);
+    else           return ahtable_unsorted_iter_finished(i);
 }
-
 
 void ahtable_iter_free(ahtable_iter_t* i)
 {
     if (i == NULL) return;
-    if (i->sorted) ahtable_sorted_iter_free(i->i.sorted);
-    else           ahtable_unsorted_iter_free(i->i.unsorted);
-    free(i);
+    if (i->sorted) ahtable_sorted_iter_free(i);
 }
 
 
 const char* ahtable_iter_key(ahtable_iter_t* i, size_t* len)
 {
-    if (i->sorted) return ahtable_sorted_iter_key(i->i.sorted, len);
-    else           return ahtable_unsorted_iter_key(i->i.unsorted, len);
+    if (i->sorted) return ahtable_sorted_iter_key(i, len);
+    else           return ahtable_unsorted_iter_key(i, len);
 }
 
 
 value_t* ahtable_iter_val(ahtable_iter_t* i)
 {
-    if (i->sorted) return ahtable_sorted_iter_val(i->i.sorted);
-    else           return ahtable_unsorted_iter_val(i->i.unsorted);
+    if (i->sorted) return ahtable_sorted_iter_val(i);
+    else           return ahtable_unsorted_iter_val(i);
 }
 

@@ -161,7 +161,7 @@ int cmpkey(const char* a, size_t ka, const char* b, size_t kb)
     return c == 0 ? (int) ka - (int) kb : c;
 }
 
-
+#include <assert.h>
 void test_hattrie_sorted_iteration()
 {
     fprintf(stderr, "iterating in order through %zu keys ... \n", k);

@@ -191,14 +191,15 @@ int hattrie_split_mid(node_ptr node, unsigned *left_m, unsigned *right_m)
     const char* key;
 
     /*! \todo expensive, maybe some heuristics or precalc would be better */
-    ahtable_iter_t* i = ahtable_iter_begin(node.b, false);
-    while (!ahtable_iter_finished(i)) {
-        key = ahtable_iter_key(i, &len);
+    ahtable_iter_t i;
+    ahtable_iter_begin(node.b, &i, false);
+    while (!ahtable_iter_finished(&i)) {
+        key = ahtable_iter_key(&i, &len);
         assert(len > 0);
         cs[(unsigned char) key[0]] += 1;
-        ahtable_iter_next(i);
+        ahtable_iter_next(&i);
     }
-    ahtable_iter_free(i);
+    ahtable_iter_free(&i);
 
     /* choose a split point */
     unsigned int all_m;
@@ -230,10 +231,11 @@ static void hattrie_split_fill(node_ptr src, node_ptr left, node_ptr right, uint
     value_t* u;
     const char* key;
     size_t len;
-    ahtable_iter_t* i = ahtable_iter_begin(src.b, false);
-    while (!ahtable_iter_finished(i)) {
-        key = ahtable_iter_key(i, &len);
-        u   = ahtable_iter_val(i);
+    ahtable_iter_t i;
+    ahtable_iter_begin(src.b, &i, false);
+    while (!ahtable_iter_finished(&i)) {
+        key = ahtable_iter_key(&i, &len);
+        u   = ahtable_iter_val(&i);
         assert(len > 0);
 
         /* first char > split_point, move to the right */
@@ -248,7 +250,7 @@ static void hattrie_split_fill(node_ptr src, node_ptr left, node_ptr right, uint
                 }
                 /* transferred to right (from reused) */
                 if (src.b == left.b) {
-                    ahtable_iter_del(i);
+                    ahtable_iter_del(&i);
                     continue;
                 }
             }   /* keep the node in right */
@@ -263,16 +265,16 @@ static void hattrie_split_fill(node_ptr src, node_ptr left, node_ptr right, uint
                 }
                 /* transferred to left (from reused) */
                 if (src.b == right.b) {
-                    ahtable_iter_del(i);
+                    ahtable_iter_del(&i);
                     continue;
                 }
             }   /* keep the node in left */
         }
         
-        ahtable_iter_next(i);
+        ahtable_iter_next(&i);
     }
     
-    ahtable_iter_free(i);
+    ahtable_iter_free(&i);
 }
 
 /* Split hybrid node - this is similar operation to burst. */
@@ -562,7 +564,8 @@ static void hattrie_iter_nextnode(hattrie_iter_t* i)
             i->level = level - 1;
         }
 
-        i->i = ahtable_iter_begin(node.b, i->sorted);
+        i->i = malloc_or_die(sizeof(ahtable_iter_t));
+        ahtable_iter_begin(node.b, i->i, i->sorted);
     }
 }
 

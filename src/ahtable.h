@@ -74,10 +74,18 @@ void ahtable_insert (ahtable_t* T, const char* key, size_t len, value_t val);
 
 int ahtable_del(ahtable_t*, const char* key, size_t len);
 
+typedef struct ahtable_iter_t_
+{
+    bool sorted;
+    ahtable_t* T; // parent
+    uint32_t i; // current key
+    union {
+        slot_t* xs; // pointers to keys
+        slot_t s;           // slot position
+    } d;
+} ahtable_iter_t;
 
-typedef struct ahtable_iter_t_ ahtable_iter_t;
-
-ahtable_iter_t* ahtable_iter_begin     (ahtable_t*, bool sorted);
+void            ahtable_iter_begin     (ahtable_t*, ahtable_iter_t*, bool sorted);
 void            ahtable_iter_next      (ahtable_iter_t*);
 void            ahtable_iter_del       (ahtable_iter_t*);
 bool            ahtable_iter_finished  (ahtable_iter_t*);

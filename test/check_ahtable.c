@@ -102,7 +102,8 @@ void test_ahtable_iteration()
 {
     fprintf(stderr, "iterating through %zu keys ... \n", k);
 
-    ahtable_iter_t* i = ahtable_iter_begin(T, false);
+    ahtable_iter_t i;
+    ahtable_iter_begin(T, &i, false);
 
     size_t count = 0;
     value_t* u;
@@ -111,11 +112,11 @@ void test_ahtable_iteration()
     size_t len;
     const char* key;
 
-    while (!ahtable_iter_finished(i)) {
+    while (!ahtable_iter_finished(&i)) {
         ++count;
 
-        key = ahtable_iter_key(i, &len);
-        u   = ahtable_iter_val(i);
+        key = ahtable_iter_key(&i, &len);
+        u   = ahtable_iter_val(&i);
         v   = str_map_get(M, key, len);
 
         if (*u != v) {
@@ -131,7 +132,7 @@ void test_ahtable_iteration()
         // twice
         str_map_set(M, key, len, 0);
 
-        ahtable_iter_next(i);
+        ahtable_iter_next(&i);
     }
 
     if (count != M->m) {
@@ -139,7 +140,7 @@ void test_ahtable_iteration()
                 count, M->m);
     }
 
-    ahtable_iter_free(i);
+    ahtable_iter_free(&i);
 
     fprintf(stderr, "done.\n");
 }
@@ -156,7 +157,8 @@ void test_ahtable_sorted_iteration()
 {
     fprintf(stderr, "iterating in order through %zu keys ... \n", k);
 
-    ahtable_iter_t* i = ahtable_iter_begin(T, true);
+    ahtable_iter_t i;
+    ahtable_iter_begin(T, &i, true);
 
     size_t count = 0;
     value_t* u;
@@ -168,17 +170,17 @@ void test_ahtable_sorted_iteration()
     const char *key = NULL;
     size_t len = 0;
 
-    while (!ahtable_iter_finished(i)) {
+    while (!ahtable_iter_finished(&i)) {
         memcpy(prev_key, key, len);
         prev_len = len;
         ++count;
 
-        key = ahtable_iter_key(i, &len);
+        key = ahtable_iter_key(&i, &len);
         if (prev_key != NULL && cmpkey(prev_key, prev_len, key, len) > 0) {
             fprintf(stderr, "[error] iteration is not correctly ordered.\n");
         }
 
-        u  = ahtable_iter_val(i);
+        u  = ahtable_iter_val(&i);
         v  = str_map_get(M, key, len);
 
         if (*u != v) {
@@ -194,10 +196,10 @@ void test_ahtable_sorted_iteration()
         // twice
         str_map_set(M, key, len, 0);
 
-        ahtable_iter_next(i);
+        ahtable_iter_next(&i);
     }
 
-    ahtable_iter_free(i);
+    ahtable_iter_free(&i);
     free(prev_key);
 
     fprintf(stderr, "done.\n");
