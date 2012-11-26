@@ -47,11 +47,9 @@ ahtable_t* ahtable_create()
 ahtable_t* ahtable_create_n(size_t n)
 {
     ahtable_t* T = malloc_or_die(sizeof(ahtable_t));
-    T->flag = 0;
-    T->c0 = T->c1 = '\0';
+    memset(T, 0, sizeof(ahtable_t));
 
     T->n = n;
-    T->m = 0;
     T->max_m = (size_t) (ahtable_max_load_factor * (double) T->n);
     T->slots = malloc_or_die(n * sizeof(slot_t));
     memset(T->slots, 0, n * sizeof(slot_t));
@@ -221,24 +219,19 @@ static value_t* insert_key(ahtable_t* T, uint32_t h, const char* key, size_t len
     value_t *val = NULL;
     ins_key(T->slots[h] + T->slot_sizes[h], key, len, &val);
     T->slot_sizes[h] = new_size;
+    
     return val;
 }
 
 
-static value_t* get_key(ahtable_t* T, const char* key, size_t len, bool insert_missing)
+static value_t* find_val(ahtable_t* T, const char* key, size_t len, uint32_t i)
 {
-    /* if we are at capacity, preemptively resize */
-    if (T->m >= T->max_m) {
-        ahtable_expand(T);
-    }
-    
-    uint32_t i = hash(key, len) % T->n;
-    size_t k;
-    slot_t s;
+    size_t k = 0;
 
     /* search the array for our key */
-    s = T->slots[i];
-    while ((size_t) (s - T->slots[i]) < T->slot_sizes[i]) {
+    slot_t s = T->slots[i];
+    slot_t np = T->slots[i] + T->slot_sizes[i];
+    while (s < np) {
         /* get the key length */
         k = keylen(s);
         s += k < 128 ? 1 : 2;
@@ -260,24 +253,32 @@ static value_t* get_key(ahtable_t* T, const char* key, size_t len, bool insert_m
         }
     }
 
-
-    /* the key was not found, so we must insert it. */
-    if (insert_missing) {
-        return insert_key(T, i, key, len);
-    }
-    else return NULL;
+    return NULL;
 }
 
 
 value_t* ahtable_get(ahtable_t* T, const char* key, size_t len)
 {
-    return get_key(T, key, len, true);
+    /* if we are at capacity, preemptively resize */
+    if (T->m >= T->max_m) {
+        ahtable_expand(T);
+    }
+
+    /* attempt to find value for given key */
+    uint32_t i = hash(key, len) % T->n;
+    value_t *ret = find_val(T, key, len, i);
+    if (ret == NULL) { /* insert if not found */
+        ret = insert_key(T, i, key, len);
+    }
+    
+    return ret;
 }
 
 
 value_t* ahtable_tryget(ahtable_t* T, const char* key, size_t len )
 {
-    return get_key(T, key, len, false);
+    uint32_t i = hash(key, len) % T->n;
+    return find_val(T, key, len, i);
 }
 
 
