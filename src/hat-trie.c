@@ -13,9 +13,6 @@
 #include <assert.h>
 #include <string.h>
 
-/* helper to squelch unused parameter warning */
-#define HT_UNUSED(x) x=x
-
 /* number of child nodes for used alphabet */
 #define NODE_CHILDS (TRIE_MAXCHAR+1)
 
@@ -180,6 +177,24 @@ void hattrie_free(hattrie_t* T)
     hattrie_free_node(T->root, false);
     slab_cache_destroy(&T->slab);
     free(T);
+}
+
+hattrie_t* hattrie_dup(const hattrie_t* T)
+{
+    hattrie_t *N = hattrie_create();
+
+    /*! \todo could be probably implemented faster */
+
+    size_t l = 0;
+    const char *k = 0;
+    hattrie_iter_t *i = hattrie_iter_begin(T, false);
+    while (!hattrie_iter_finished(i)) {
+        k = hattrie_iter_key(i, &l);
+        *hattrie_get(N, k, l) = *hattrie_iter_val(i);
+        hattrie_iter_next(i);
+    }
+    hattrie_iter_free(i);
+    return N;
 }
 
 int hattrie_split_mid(node_ptr node, unsigned *left_m, unsigned *right_m)
@@ -593,12 +608,14 @@ hattrie_iter_t* hattrie_iter_begin(const hattrie_t* T, bool sorted)
            i->stack != NULL ) {
 
         ahtable_iter_free(i->i);
+        free(i->i);
         i->i = NULL;
         hattrie_iter_nextnode(i);
     }
 
     if (i->i != NULL && ahtable_iter_finished(i->i)) {
         ahtable_iter_free(i->i);
+        free(i->i);
         i->i = NULL;
     }
 
@@ -623,12 +640,14 @@ void hattrie_iter_next(hattrie_iter_t* i)
            i->stack != NULL ) {
 
         ahtable_iter_free(i->i);
+        free(i->i);
         i->i = NULL;
         hattrie_iter_nextnode(i);
     }
 
     if (i->i != NULL && ahtable_iter_finished(i->i)) {
         ahtable_iter_free(i->i);
+        free(i->i);
         i->i = NULL;
     }
 }
@@ -643,7 +662,10 @@ bool hattrie_iter_finished(hattrie_iter_t* i)
 void hattrie_iter_free(hattrie_iter_t* i)
 {
     if (i == NULL) return;
-    if (i->i) ahtable_iter_free(i->i);
+    if (i->i) {
+        ahtable_iter_free(i->i);
+        free(i->i);
+    }
 
     hattrie_node_stack_t* next;
     while (i->stack) {
@@ -691,6 +713,3 @@ value_t* hattrie_iter_val(hattrie_iter_t* i)
 
     return ahtable_iter_val(i->i);
 }
-
-
-
