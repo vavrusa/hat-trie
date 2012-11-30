@@ -33,6 +33,10 @@ void       hattrie_free   (hattrie_t*);       //< Free all memory used by a trie
 hattrie_t* hattrie_dup    (const hattrie_t*); //< Duplicate an existing trie.
 void       hattrie_clear  (hattrie_t*);       //< Remove all entries.
 
+/** Build order index on all ahtable nodes in trie.
+ */
+void hattrie_build_index (hattrie_t*);
+
 
 /** Find the given key in the trie, inserting it if it does not exist, and
  * returning a pointer to it's key.
@@ -43,10 +47,13 @@ void       hattrie_clear  (hattrie_t*);       //< Remove all entries.
  */
 value_t* hattrie_get (hattrie_t*, const char* key, size_t len);
 
-
 /** Find a given key in the table, returning a NULL pointer if it does not
  * exist. */
 value_t* hattrie_tryget (hattrie_t*, const char* key, size_t len);
+
+/** Find a given key in the table, returning a NULL pointer if it does not
+ * exist. Also set prev to point to previous node. */
+int hattrie_find_leq (hattrie_t*, const char* key, size_t len, value_t** dst);
 
 /** Delete a given key from trie. Returns 0 if successful or -1 if not found.
  */
