@@ -15,7 +15,6 @@ void randstr(char* x, size_t len)
     }
 }
 
-
 const size_t n = 100000;  // how many unique strings
 const size_t m_low  = 50;  // minimum length of each string
 const size_t m_high = 500; // maximum length of each string
@@ -205,6 +204,42 @@ void test_ahtable_sorted_iteration()
     fprintf(stderr, "done.\n");
 }
 
+void test_ahtable_find_prev()
+{
+    fprintf(stderr, "finding prev for %zu keys ... \n", k);
+    ahtable_build_index(T);
+
+    ahtable_iter_t i;
+    ahtable_iter_begin(T, &i, true);
+
+    value_t* u;
+    const char *key = NULL;
+    char *dkey = NULL;
+    size_t len = 0;
+
+    while (!ahtable_iter_finished(&i)) {
+        u  = ahtable_iter_val(&i);
+        key = ahtable_iter_key(&i, &len);
+       
+        /* increase key last byte by 1 and check result */
+        dkey = realloc(dkey, len); memcpy(dkey, key, len);
+        ++dkey[len-1];
+        value_t *fp = NULL;
+        int r = ahtable_find_leq(T, dkey, len, &fp);
+        if (*fp != *u || r != -1) {
+            fprintf(stderr, "[error] ahtable_find_leq should find %lu, "
+                    "but found prev=%lu and return -1, returned %d\n",
+                    *u, *fp, r);
+            
+        }
+        ahtable_iter_next(&i);
+    }
+
+    ahtable_iter_free(&i);
+    free(dkey);
+    fprintf(stderr, "done.\n");
+}
+
 
 int main()
 {
@@ -216,6 +251,11 @@ int main()
     setup();
     test_ahtable_insert();
     test_ahtable_sorted_iteration();
+    teardown();
+    
+    setup();
+    test_ahtable_insert();
+    test_ahtable_find_prev();
     teardown();
 
     return 0;

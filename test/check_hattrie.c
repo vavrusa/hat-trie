@@ -1,4 +1,3 @@
-
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -161,7 +160,7 @@ int cmpkey(const char* a, size_t ka, const char* b, size_t kb)
     return c == 0 ? (int) ka - (int) kb : c;
 }
 
-#include <assert.h>
+
 void test_hattrie_sorted_iteration()
 {
     fprintf(stderr, "iterating in order through %zu keys ... \n", k);
@@ -227,6 +226,58 @@ void test_hattrie_sorted_iteration()
 }
 
 
+void test_hattrie_find_prev()
+{
+    fprintf(stderr, "finding previous for %zu keys ... \n", k);
+    hattrie_build_index(T);
+    
+    hattrie_iter_t* i = hattrie_iter_begin(T, true);
+
+    value_t* u;
+    const char *key = NULL;
+    char *dkey = NULL;
+    char *fkey = NULL;
+    size_t len = 0, flen = 0;
+    
+    while (!hattrie_iter_finished(i)) {
+        u = hattrie_iter_val(i);
+        key = hattrie_iter_key(i, &len);
+        
+        /* first key */
+        if (!fkey) {
+            fkey = malloc(len); memcpy(fkey, key, len);
+            --fkey[len-1];
+            flen = len;
+        }
+
+        /* check hattrie_find_leq functionality */
+        dkey = realloc(dkey, len); memcpy(dkey, key, len);
+        ++dkey[len-1];
+        value_t *fp = NULL;
+        int r = hattrie_find_leq(T, dkey, len, &fp);
+        if (*fp != *u || r != -1) {
+            fprintf(stderr, "[error] hattrie_find_leq should find %lu, "
+                    "but found prev=%lu, rval=%d\n",
+                    *u, *fp, r);
+        }
+        hattrie_iter_next(i);
+    }
+    hattrie_iter_free(i);
+    
+    /* check before first key */
+    value_t *fp = NULL;
+    int r = hattrie_find_leq(T, fkey, flen, &fp);
+    if (r != 1 || fp != NULL) {
+        fprintf(stderr, "[error] hattrie_find_leq should return 1 and NULL for "
+                "string < first string, returned %d (%p)\n",
+                r, (void*)fp);
+    }
+    free(fkey);
+    free(dkey);
+    fprintf(stderr, "done.\n");
+}
+
+
 void test_trie_non_ascii()
 {
     fprintf(stderr, "checking non-ascii... \n");
@@ -248,8 +299,6 @@ void test_trie_non_ascii()
 }
 
 
-
-
 int main()
 {
     test_trie_non_ascii();
@@ -263,11 +312,11 @@ int main()
     test_hattrie_insert();
     test_hattrie_sorted_iteration();
     teardown();
+    
+    setup();
+    test_hattrie_insert();
+    test_hattrie_find_prev();
+    teardown();
 
     return 0;
 }
-
-
-
-
-
