@@ -38,11 +38,12 @@ typedef struct ahtable_t_
     unsigned char c1;
 
     size_t n;        // number of slots
-    size_t m;        // numbur of key/value pairs stored
+    size_t m;        // number of key/value pairs stored
     size_t max_m;    // number of stored keys before we resize
 
     uint32_t*  slot_sizes;
     slot_t*  slots;
+    slot_t*  index;  // order index (optional)
 } ahtable_t;
 
 ahtable_t* ahtable_create   (void);         // Create an empty hash table.
@@ -67,6 +68,22 @@ value_t* ahtable_get (ahtable_t*, const char* key, size_t len);
  * exist. */
 value_t* ahtable_tryget (ahtable_t*, const char* key, size_t len);
 
+/** Return value from index.
+ */
+value_t *ahtable_indexval(ahtable_t*, unsigned i);
+
+/** Build order index for fast ordered lookup.
+ */
+void ahtable_build_index(ahtable_t*);
+
+/** Find a key that is exact match or lexicographic predecessor.
+ *  \retval  0 if exact match
+ *  \retval  1 if couldn't find and no predecessor is found
+ *  \retval -1 if found predecessor
+ */
+int ahtable_find_leq (ahtable_t*, const char* key, size_t len, value_t** dst);
+
+
 /** Insert given key and value without checking for existence.
  */
 void ahtable_insert (ahtable_t* T, const char* key, size_t len, value_t val);
@@ -76,13 +93,14 @@ int ahtable_del(ahtable_t*, const char* key, size_t len);
 
 typedef struct ahtable_iter_t_
 {
-    bool sorted;
+    unsigned flags;
     ahtable_t* T; // parent
     uint32_t i; // current key
     union {
         slot_t* xs; // pointers to keys
         slot_t s;           // slot position
     } d;
+    
 } ahtable_iter_t;
 
 void            ahtable_iter_begin     (ahtable_t*, ahtable_iter_t*, bool sorted);
